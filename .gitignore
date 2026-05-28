@@ -1,0 +1,9 @@
+data/raw/
+data/processed/
+data/labeled/
+data/splits/
+models/trained_models/
+__pycache__/
+*.pyc
+.env
+.ipynb_checkpoints/
