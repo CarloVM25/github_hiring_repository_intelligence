@@ -1,0 +1,15 @@
+model,scope,category,accuracy,precision,recall,f1
+baseline_logistic_regression,overall,all,0.3554,0.4263,0.3554,0.3651
+distilbert-base-uncased,overall,all,0.7833,0.7845,0.7833,0.771
+distilbert-base-uncased,per_class,intern,,0.82,0.76,0.7888
+distilbert-base-uncased,per_class,junior,,0.71,0.84,0.7694
+distilbert-base-uncased,per_class,senior,,0.85,0.72,0.7797
+distilbert-base-uncased,per_class,lead,,0.88,0.88,0.88
+distilbert-base-uncased,per_class,template,,0.65,0.52,0.5778
+distilbert-base-uncased,per_class,low_value,,0.73,0.8,0.7634
+baseline_logistic_regression,per_class,intern,,0.2857,0.129,0.1778
+baseline_logistic_regression,per_class,junior,,0.5484,0.4359,0.4857
+baseline_logistic_regression,per_class,senior,,0.4615,0.3158,0.375
+baseline_logistic_regression,per_class,lead,,0.36,0.9,0.5143
+baseline_logistic_regression,per_class,template,,0.1,0.5,0.1667
+baseline_logistic_regression,per_class,low_value,,0.0,0.0,0.0
