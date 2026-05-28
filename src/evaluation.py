@@ -127,6 +127,7 @@ def _run_baseline(train_df: pd.DataFrame, test_df: pd.DataFrame) -> dict:
         random_state=42,
         class_weight="balanced",
         C=1.0,
+        multi_class="multinomial",
         solver="lbfgs",
     )
     clf.fit(X_train_s, y_train)
@@ -193,6 +194,9 @@ def _print_error_analysis(bert: dict, baseline: dict) -> None:
     print("  ERROR ANALYSIS")
     print(sep)
 
+    # ── BERT: precision vs recall gap reveals confusion direction ──────────
+    # P > R  ->  model is conservative; actual instances leak into other classes
+    # P < R  ->  model over-fires; other classes bleed into this bucket
     print("\n  BERT -- confusion signals (precision / recall gap):")
     print(f"  {'category':<14}  {'precision':>10}  {'recall':>8}  {'gap (P-R)':>10}  direction")
     print("  " + "-" * 64)
@@ -206,7 +210,7 @@ def _print_error_analysis(bert: dict, baseline: dict) -> None:
          )
         for l in LABEL_NAMES
     ]
-    for gap, label, p, r in sorted(diffs):
+    for gap, label, p, r in sorted(diffs):          # most negative first
         if gap < -0.05:
             note = f"over-predicted  (other classes absorbed into {label})"
         elif gap > 0.05:
@@ -216,6 +220,7 @@ def _print_error_analysis(bert: dict, baseline: dict) -> None:
         sign = "+" if gap >= 0 else ""
         print(f"  {label:<14}  {p:>10.4f}  {r:>8.4f}  {sign}{gap:>9.4f}  {note}")
 
+    # ── Baseline: real confusion matrix ───────────────────────────────────
     cm = confusion_matrix(
         baseline["y_true"], baseline["y_pred"],
         labels=list(range(len(LABEL_NAMES))),
@@ -224,9 +229,13 @@ def _print_error_analysis(bert: dict, baseline: dict) -> None:
     print(f"\n\n  BASELINE -- confusion matrix (rows = true, cols = predicted):\n")
     print(" " * 16 + "".join(f"{n:>{col_w}}" for n in LABEL_NAMES))
     for i, label in enumerate(LABEL_NAMES):
-        cells = [f"{cm[i, j]:>{col_w}}" for j in range(len(LABEL_NAMES))]
+        cells = []
+        for j in range(len(LABEL_NAMES)):
+            val = cm[i, j]
+            cells.append(f"{val:>{col_w}}")
         print(f"  {label:<14}" + "".join(cells))
 
+    # Top confused pairs (off-diagonal, most frequent first)
     pairs = sorted(
         [
             (cm[i, j], LABEL_NAMES[i], LABEL_NAMES[j])
@@ -298,6 +307,7 @@ def _save_comparison(bert: dict, baseline: dict) -> None:
             "f1":        round(vals["f1"],        4),
         })
 
+    # Per-class — BERT (from JSON)
     for label in LABEL_NAMES:
         pc = bert["per_class"].get(label, {})
         rows.append({
@@ -310,6 +320,7 @@ def _save_comparison(bert: dict, baseline: dict) -> None:
             "f1":        round(pc.get("f1",        0.0), 4),
         })
 
+    # Per-class — baseline (computed from raw predictions)
     y_true = baseline["y_true"]
     y_pred = baseline["y_pred"]
     ids    = list(range(len(LABEL_NAMES)))
