@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 logging.basicConfig(
@@ -223,6 +224,95 @@ def preprocess() -> pd.DataFrame:
     logger.info("Saved cleaned data -> %s  (%d rows, %d cols)", CLEAN_PATH, *df.shape)
 
     return df
+
+
+LABELED_PATH = Path("data/labeled/repositories_labeled.csv")
+SPLITS_DIR = Path("data/splits")
+
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+# TEST_RATIO = 0.15 (remainder)
+
+
+# ---------------------------------------------------------------------------
+# Train / validation / test splits
+# ---------------------------------------------------------------------------
+
+def create_splits() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Stratified 70 / 15 / 15 split on the labeled dataset.
+
+    Returns (train, val, test) DataFrames and saves them under data/splits/.
+    """
+    if not LABELED_PATH.exists():
+        logger.error(
+            "Labeled data not found at %s — run llm_labeling.py first.", LABELED_PATH
+        )
+        sys.exit(1)
+
+    df = pd.read_csv(LABELED_PATH)
+    before = len(df)
+    df = df.dropna(subset=["label"])
+    dropped = before - len(df)
+    if dropped:
+        logger.info("Dropped %d rows with NaN label  (%d remaining)", dropped, len(df))
+    logger.info("Loaded %d labeled repos from %s", len(df), LABELED_PATH)
+
+    # Two-stage stratified split: train | temp, then temp → val | test
+    train, temp = train_test_split(
+        df,
+        test_size=1 - TRAIN_RATIO,
+        stratify=df["label"],
+        random_state=42,
+    )
+    val, test = train_test_split(
+        temp,
+        test_size=0.5,          # half of 30 % = 15 % each
+        stratify=temp["label"],
+        random_state=42,
+    )
+
+    SPLITS_DIR.mkdir(parents=True, exist_ok=True)
+    splits = {"train": train, "val": val, "test": test}
+    for name, split_df in splits.items():
+        path = SPLITS_DIR / f"{name}.csv"
+        split_df.to_csv(path, index=False)
+        logger.info("Saved %s -> %s  (%d rows)", name, path, len(split_df))
+
+    _print_split_distributions(splits)
+    return train, val, test
+
+
+def _print_split_distributions(splits: dict[str, pd.DataFrame]) -> None:
+    valid_labels = {"intern", "junior", "senior", "lead", "template", "low_value"}
+    all_labels = sorted(
+        set().union(*(set(df["label"].unique()) for df in splits.values()))
+        & valid_labels
+    )
+
+    sep = "=" * 66
+    print(f"\n{sep}")
+    print("  SPLIT LABEL DISTRIBUTIONS")
+    print(sep)
+    header = f"  {'label':<14}" + "".join(f"  {n:<14}" for n in splits)
+    print(header)
+    print("  " + "-" * 62)
+
+    for label in all_labels:
+        row = f"  {label:<14}"
+        for split_df in splits.values():
+            counts = split_df["label"].value_counts()
+            n = counts.get(label, 0)
+            pct = n / len(split_df) * 100
+            row += f"  {n:>4} ({pct:4.1f}%)   "
+        print(row)
+
+    print("  " + "-" * 62)
+    totals = f"  {'TOTAL':<14}" + "".join(
+        f"  {len(df):>4} (100.0%)   " for df in splits.values()
+    )
+    print(totals)
+    print(f"{sep}\n")
 
 
 if __name__ == "__main__":

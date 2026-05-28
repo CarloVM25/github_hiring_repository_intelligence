@@ -126,9 +126,19 @@ def _load_existing_labels() -> dict[str, str]:
 # Checkpoint write
 # ---------------------------------------------------------------------------
 
-def _save(df: pd.DataFrame) -> None:
+def _save_output(summaries: pd.DataFrame, labels: dict[str, str]) -> None:
+    """
+    Rebuild and persist the output CSV from the full summaries frame and the
+    accumulated labels dict.  Always writes every row in summaries so the file
+    stays at 800 rows regardless of how many labels have been collected so far.
+    Unlabeled rows get NaN in the label column.
+    Output columns: full_name, label, text_summary.
+    """
+    out = summaries[["full_name", "text_summary"]].copy()
+    out["label"] = out["full_name"].map(labels)          # NaN for not-yet-labeled
+    out = out[["full_name", "label", "text_summary"]]
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(OUT_PATH, index=False)
+    out.to_csv(OUT_PATH, index=False)
 
 
 # ---------------------------------------------------------------------------
@@ -141,55 +151,58 @@ def label_repos() -> pd.DataFrame:
                      SUMMARIES_PATH)
         sys.exit(1)
 
-    df = pd.read_csv(SUMMARIES_PATH, dtype=str)
-    logger.info("Loaded %d repos from %s", len(df), SUMMARIES_PATH)
+    summaries = pd.read_csv(SUMMARIES_PATH, usecols=["full_name", "text_summary"],
+                            dtype=str)
+    logger.info("Loaded %d repos from %s", len(summaries), SUMMARIES_PATH)
 
-    existing = _load_existing_labels()
+    # labels dict accumulates all known labels (existing + newly assigned)
+    labels: dict[str, str] = _load_existing_labels()
 
-    # Seed the label column from any prior run
-    if "label" not in df.columns:
-        df["label"] = ""
-    df.loc[df["full_name"].isin(existing), "label"] = \
-        df.loc[df["full_name"].isin(existing), "full_name"].map(existing)
-
-    todo = df[~df["full_name"].isin(existing)].index.tolist()
-    logger.info("%d repos need labeling", len(todo))
+    todo = summaries[~summaries["full_name"].isin(labels)]["full_name"].tolist()
+    logger.info("%d repos need labeling  (%d already done)", len(todo), len(labels))
 
     if not todo:
         logger.info("Nothing to do — all repos already labeled.")
-        _print_distribution(df)
-        return df
+        out = _build_output(summaries, labels)
+        _print_distribution(out)
+        return out
 
     client = _make_client()
+    summary_map = dict(zip(summaries["full_name"], summaries["text_summary"]))
     labeled_count = 0
     failed_count = 0
 
-    for i, idx in enumerate(todo, start=1):
-        summary = df.at[idx, "text_summary"]
-        full_name = df.at[idx, "full_name"]
-
-        label = _call_groq(client, summary)
+    for i, full_name in enumerate(todo, start=1):
+        label = _call_groq(client, summary_map[full_name])
         if label:
-            df.at[idx, "label"] = label
+            labels[full_name] = label
             labeled_count += 1
         else:
-            df.at[idx, "label"] = "low_value"   # safe fallback for failed rows
+            labels[full_name] = "low_value"
             failed_count += 1
-            logger.error("[%d/%d] FAILED  %s  → defaulted to low_value",
+            logger.error("[%d/%d] FAILED  %s  -> defaulted to low_value",
                          i, len(todo), full_name)
 
         if i % BATCH_SIZE == 0 or i == len(todo):
-            _save(df)
+            _save_output(summaries, labels)
             logger.info("Checkpoint [%d/%d]  labeled=%d  failed=%d",
                         i, len(todo), labeled_count, failed_count)
 
-        if i < len(todo):                   # no delay after the very last call
+        if i < len(todo):
             time.sleep(REQUEST_DELAY)
 
-    _save(df)
-    logger.info("Done: %d labeled, %d failed  →  %s", labeled_count, failed_count, OUT_PATH)
-    _print_distribution(df)
-    return df
+    _save_output(summaries, labels)
+    logger.info("Done: %d labeled, %d failed  ->  %s", labeled_count, failed_count, OUT_PATH)
+
+    out = _build_output(summaries, labels)
+    _print_distribution(out)
+    return out
+
+
+def _build_output(summaries: pd.DataFrame, labels: dict[str, str]) -> pd.DataFrame:
+    out = summaries[["full_name", "text_summary"]].copy()
+    out["label"] = out["full_name"].map(labels)
+    return out[["full_name", "label", "text_summary"]]
 
 
 # ---------------------------------------------------------------------------
@@ -209,25 +222,12 @@ def _print_distribution(df: pd.DataFrame) -> None:
         bar = "#" * int(n / total * 40)
         print(f"  {label:<12}  {n:>4}  ({n / total * 100:5.1f}%)  {bar}")
 
-    unlabeled = (df["label"] == "") | (~df["label"].isin(VALID_LABELS))
+    unlabeled = df["label"].isna() | (~df["label"].isin(VALID_LABELS))
     if unlabeled.any():
         print(f"\n  unlabeled / invalid: {unlabeled.sum()}")
 
     print(f"\n  Total: {total}")
     print(f"{sep}\n")
-
-    # Per search-category breakdown
-    if "search_category" in df.columns:
-        print("  BY SEARCH CATEGORY")
-        print(sep)
-        pivot = (
-            df.groupby(["search_category", "label"])
-            .size()
-            .unstack(fill_value=0)
-            .reindex(columns=sorted(VALID_LABELS), fill_value=0)
-        )
-        print(pivot.to_string())
-        print(f"{sep}\n")
 
 
 if __name__ == "__main__":
