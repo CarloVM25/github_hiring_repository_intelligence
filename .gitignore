@@ -1,0 +1,17 @@
+# Credentials
+.env
+
+# Data files
+data/raw/*.csv
+data/processed/*.csv
+data/labeled/*.csv
+data/splits/*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Trained model artifacts
+models/trained_models/*.bin
+models/trained_models/*.pt
